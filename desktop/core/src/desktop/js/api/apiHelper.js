@@ -1801,17 +1801,31 @@ class ApiHelper {
   }
 
   /**
+   * @typedef {Object} ExecutionHandle
+   * @property {string} guid
+   * @property {boolean} has_more_statements
+   * @property {boolean} has_result_set
+   * @property {Object} log_context
+   * @property {number} modified_row_count
+   * @property {number} operation_type
+   * @property {string} previous_statement_hash
+   * @property {string} secret
+   * @property {string} session_guid
+   * @property {string} statement
+   * @property {number} statement_id
+   * @property {number} statements_count
+   */
+
+  /**
    * API function to execute an ExecutableStatement
    *
    * @param {Object} options
    * @param {boolean} [options.silenceErrors]
-   *
    * @param {ExecutableStatement} options.executable
-   * @param {ContextCompute} options.compute
    *
-   * @return {Promise}
+   * @return {Promise<ExecutionHandle>}
    */
-  execute(options) {
+  executeStatement(options) {
     const executable = options.executable;
     const url = EXECUTE_API_PREFIX + executable.sourceType;
     const deferred = $.Deferred();
@@ -1876,7 +1890,7 @@ class ApiHelper {
           if (options.executable.handle !== handle) {
             options.executable.handle = handle;
           }
-          this.cancelExecute(options).always(cancelDeferred.resolve);
+          this.cancelStatement(options).always(cancelDeferred.resolve);
         })
         .fail(cancelDeferred.resolve);
       return cancelDeferred;
@@ -1885,7 +1899,15 @@ class ApiHelper {
     return promise;
   }
 
-  cancelExecute(options) {
+  /**
+   *
+   * @param {Object} options
+   * @param {boolean} [options.silenceErrors]
+   * @param {ExecutableStatement} options.executable
+   *
+   * @return {Promise}
+   */
+  cancelStatement(options) {
     const executable = options.executable;
 
     // TODO: What do we actually need? And for what reasons....
@@ -1908,7 +1930,103 @@ class ApiHelper {
         sourceType: executable.sourceType,
         handle: executable.handle
       }),
-      { silenceErrors: options.silenceErrors }
+      options
+    );
+  }
+
+  /**
+   * @typedef {Object} ResultResponseMeta
+   * @property {string} comment
+   * @property {string} name
+   * @property {string} type
+   */
+
+  /**
+   * @typedef {Object} ResultResponse
+   * @property {Object[]} data
+   * @property {boolean} has_more
+   * @property {boolean} isEscaped
+   * @property {ResultResponseMeta[]} meta
+   * @property {string} type
+   */
+
+  /**
+   *
+   * @param {Object} options
+   * @param {boolean} [options.silenceErrors]
+   * @param {ExecutableStatement} options.executable
+   * @param {number} options.rows
+   * @param {boolean} options.startOver
+   *
+   * @return {Promise<ResultResponse>}
+   */
+  async fetchResults(options) {
+    return new Promise((resolve, reject) => {
+      const executable = options.executable;
+
+      const adaptNotebook2toNotebook = newModel => {
+        const snippet = {
+          type: newModel.sourceType,
+          result: {
+            handle: newModel.handle
+          }
+        };
+
+        return {
+          snippet: JSON.stringify(snippet),
+          notebook: JSON.stringify({}),
+          rows: newModel.rows,
+          startOver: newModel.startOver
+        };
+      };
+
+      this.simplePost(
+        '/notebook/api/fetch_result_data',
+        adaptNotebook2toNotebook({
+          sourceType: executable.sourceType,
+          handle: executable.handle,
+          rows: options.rows,
+          startOver: !!options.startOver
+        }),
+        options
+      ).done((response) => {
+        resolve(response.result);
+      }).fail(reject);
+    })
+  }
+
+  /**
+   *
+   * @param {Object} options
+   * @param {boolean} [options.silenceErrors]
+   * @param {ExecutableStatement} options.executable
+   *
+   * @return {Promise}
+   */
+  closeStatement(options) {
+    const executable = options.executable;
+
+    // TODO: What do we actually need? And for what reasons....
+    const adaptNotebook2toNotebook = newModel => {
+      const snippet = {
+        type: newModel.sourceType,
+        result: {
+          handle: newModel.handle
+        }
+      };
+
+      return {
+        snippet: JSON.stringify(snippet)
+      };
+    };
+
+    return this.simplePost(
+      '/notebook/api/close_statement',
+      adaptNotebook2toNotebook({
+        sourceType: executable.sourceType,
+        handle: executable.handle
+      }),
+      options
     );
   }
 

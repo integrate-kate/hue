@@ -15,20 +15,30 @@
 // limitations under the License.
 
 import apiHelper from 'api/apiHelper';
+import { ExecutionResult } from "apps/notebook2/execution/executionResult";
 import hueAnalytics from 'utils/hueAnalytics';
 
-const STATUS = {
+/**
+ *  ready +----> executing +----> done +----> closed
+ *                   +     |
+ *                   |     +----> fail
+ *                   |
+ *                   +----> canceling +----> canceled
+ *
+ * @type { { canceling: string, canceled: string, fail: string, ready: string, executing: string, done: string } }
+ */
+const EXECUTION_STATUS = {
+  ready: 'ready',
+  executing: 'executing',
   canceled: 'canceled',
   canceling: 'canceling',
-  executed: 'executed',
-  fetchingResults: 'fetchingResults',
-  ready: 'ready',
-  running: 'running',
-  success: 'success',
-  failed: 'failed'
+  closed: 'closed',
+  done: 'done',
+  fail: 'fail'
 };
 
 class ExecutableStatement {
+
   /**
    * @param options
    * @param {string} options.sourceType
@@ -49,8 +59,9 @@ class ExecutableStatement {
       statement_id: 0 // TODO: Get rid of need for initial handle in the backend
     };
 
+    this.executionResult = undefined;
     this.lastCancellable = undefined;
-    this.status = STATUS.ready;
+    this.status = EXECUTION_STATUS.ready;
   }
 
   getStatement() {
@@ -58,34 +69,39 @@ class ExecutableStatement {
   }
 
   async execute() {
-    if (this.status === STATUS.running) {
-      return;
-    }
-    hueAnalytics.log('notebook', 'execute/' + this.sourceType);
-    this.status = STATUS.running;
+    return new Promise((resolve, reject) => {
+      if (this.status !== EXECUTION_STATUS.ready) {
+        reject();
+        return;
+      }
 
-    this.lastCancellable = apiHelper
-      .execute({
-        executable: this
-      })
-      .done(handle => {
-        this.handle = handle;
-        this.status = STATUS.fetchingResults;
-      })
-      .fail(error => {
-        this.status = STATUS.failed;
-      });
+      hueAnalytics.log('notebook', 'execute/' + this.sourceType);
+      this.status = EXECUTION_STATUS.executing;
 
-    return this.lastCancellable;
+      this.lastCancellable = apiHelper
+        .executeStatement({
+          executable: this
+        })
+        .done(handle => {
+          this.handle = handle;
+          this.result = new ExecutionResult(this);
+          this.status = EXECUTION_STATUS.done;
+          resolve(this.result);
+        })
+        .fail(error => {
+          this.status = EXECUTION_STATUS.fail;
+          reject(error);
+        });
+    })
   }
 
   async cancel() {
     return new Promise(resolve => {
-      if (this.lastCancellable && this.status === STATUS.fetchingResults) {
+      if (this.lastCancellable && this.status === EXECUTION_STATUS.executing) {
         hueAnalytics.log('notebook', 'cancel/' + this.sourceType);
-        this.status = STATUS.canceling;
+        this.status = EXECUTION_STATUS.canceling;
         this.lastCancellable.cancel().always(() => {
-          this.status = STATUS.canceled;
+          this.status = EXECUTION_STATUS.canceled;
           resolve();
         });
         this.lastCancellable = undefined;
@@ -94,6 +110,18 @@ class ExecutableStatement {
       }
     });
   }
+  
+  async close() {
+    return new Promise(resolve => {
+      if (this.status === EXECUTION_STATUS.executing) {
+        this.cancel().finally(resolve)
+      } else if (this.status === EXECUTION_STATUS.done) {
+        apiHelper.closeStatement({ executable: this }).finally(resolve);
+      }
+    }).finally(() => {
+      this.status = EXECUTION_STATUS.closed;
+    });
+  }
 }
 
-export { STATUS, ExecutableStatement };
+export { EXECUTION_STATUS, ExecutableStatement };
