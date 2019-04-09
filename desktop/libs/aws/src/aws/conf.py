@@ -199,7 +199,7 @@ def has_iam_metadata():
   try:
     # To avoid unnecessary network call, check if Hue is running on EC2 instance
     # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/identify_ec2_instances.html
-    if os.path.exists('/sys/hypervisor/uuid') and open('/sys/hypervisor/uuid', 'read').read()[:3] == 'ec2':
+    if (os.path.exists('/sys/hypervisor/uuid') and open('/sys/hypervisor/uuid', 'read').read()[:3] == 'ec2') or (os.path.exists('/sys/devices/virtual/dmi/id/sys_vendor') and open('/sys/devices/virtual/dmi/id/sys_vendor', 'r').read().strip() == 'Amazon EC2'):
       metadata = boto.utils.get_instance_metadata(timeout=1, num_retries=1)
       return 'iam' in metadata
   except Exception, e:
